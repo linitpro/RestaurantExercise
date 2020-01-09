@@ -56,6 +56,22 @@ namespace RestaurantExercise.Controllers
             return this.restManager.Lookup(clientsGroups);
         }
 
+        /// <summary>
+        /// Посмотреть все
+        /// </summary>
+        /// <param name="clientsGroups"></param>
+        /// <returns></returns>
+        [HttpGet("all")]
+        public Table LookupAll([FromQuery]ClientsGroups clientsGroups)
+        {
+            this.CheckClientGroup(clientsGroups);
+            return this.restManager.Lookup(clientsGroups);
+        }
+
+        /// <summary>
+        /// Валидация 
+        /// </summary>
+        /// <param name="clientsGroups"></param>
         private void CheckClientGroup(ClientsGroups clientsGroups)
         {
             if (clientsGroups?.Size < 1 && clientsGroups?.Size > 6)

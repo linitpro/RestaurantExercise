@@ -2,137 +2,204 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace RestaurantExercise.Code.RestManager
 {
-    /// <summary>
-    /// Менеджер отвечающий за ресторан
-    /// </summary>
     public class RestManagerImpl : IRestManager
     {
-        /// <summary>
-        /// Очередь клиентов
-        /// </summary>
-        private readonly ConcurrentQueue<ClientsGroups>[] clientsQueue;
-
-        /// <summary>
-        /// Очередь занятых столов
-        /// </summary>
-        private readonly ConcurrentDictionary<Table, ClientsGroups>[] tables;
-
-        /// <summary>
-        /// Очереди доступных столиков
-        /// </summary>
-        private readonly ConcurrentQueue<Table>[] availableTablesQueue;
+        private readonly ConcurrentQueue<Message> messages;
+        private readonly Dictionary<Table, List<ClientsGroups>> tables;
+        private readonly List<ClientsGroups> clients;
 
         public RestManagerImpl()
         {
-            // очереди столов с индексами их размера
-            var tables1 = TableFactory.Create();
+            this.messages = new ConcurrentQueue<Message>();
+            this.tables = new Dictionary<Table, List<ClientsGroups>>();
 
-            this.tables = new ConcurrentDictionary<Table, ClientsGroups>[5];
-            for (int i = 0; i < 5; i++)
+            // заполним столы
+            var tempTables = TableFactory.Create();
+            foreach (var tempTable in tempTables)
             {
-                this.tables[i] = new ConcurrentDictionary<Table, ClientsGroups>();
+                this.tables.Add(tempTable, new List<ClientsGroups>());
             }
 
+            Thread thread = new Thread(new ThreadStart(this.GetTask));
+            thread.Start();
+        }
 
-            this.availableTablesQueue = new ConcurrentQueue<Table>[5];
-            for (int i = 2; i <= 6; i++)
+        private void GetTask()
+        {
+            while(true)
             {
-                this.availableTablesQueue[i-2] = new ConcurrentQueue<Table>(tables1.Where(x => x.Size == i));
-            }
-
-            // очереди клиентов с индексами их размера
-            this.clientsQueue = new ConcurrentQueue<ClientsGroups>[6];
-            for (int i = 0; i < 6; i++)
-            {
-                this.clientsQueue[i] = new ConcurrentQueue<ClientsGroups>();
+                if(this.messages.TryDequeue(out Message message))
+                {
+                    switch (message.Type)
+                    {
+                        case ActionType.Arrive:
+                            this.Arrive(message.ClientsGroups);
+                            break;
+                        case ActionType.Leave:
+                            this.Leave(message.ClientsGroups);
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                else
+                {
+                    Thread.Sleep(50);
+                }
             }
         }
 
         /// <summary>
-        /// По клиенту определить стол
+        /// Посмотреть столик клиента
         /// </summary>
         /// <param name="clientsGroups"></param>
         /// <returns></returns>
         public Table Lookup(ClientsGroups clientsGroups)
         {
-            for (int i = clientsGroups.Size; i <= 6; i++)
-            {
-                var table = this.tables[i]
-                    .FirstOrDefault(x => x.Value.Guid == clientsGroups.Guid).Key;
-
-                if(table != null)
-                {
-                    return table;
-                }
-            }
-
-            return null;
+            return this.tables.FirstOrDefault(x => x.Value.Any(a => a.Guid == clientsGroups.Guid)).Key;
         }
 
         /// <summary>
-        /// Прибытие
+        /// Прибытие клиента
         /// </summary>
         /// <param name="clientsGroups"></param>
         public void OnArrive(ClientsGroups clientsGroups)
         {
-            var boo = false;
-
-            var tempSize = 2;
-            if (clientsGroups.Size != 1)
-            {
-                tempSize = clientsGroups.Size;
-            }
-
-            for (int i = tempSize; i <= 6; i++)
-            {
-                boo = this.availableTablesQueue[tempSize-2].TryDequeue(out Table table);
-
-                if(boo)
-                {
-                    table.ClientsGroups = clientsGroups;
-                    this.tables[tempSize-2].TryAdd(table, clientsGroups);
-                    break;
-                }
-                else
-                {
-                    continue;
-                }
-            }
-
-            if(!boo)
-            {
-                this.clientsQueue[clientsGroups.Size].Enqueue(clientsGroups);
-            }
+            this.messages.Enqueue(new Message(ActionType.Arrive, clientsGroups));
         }
 
+        /// <summary>
+        /// Убытие клиента
+        /// </summary>
+        /// <param name="clientsGroups"></param>
         public void OnLeave(ClientsGroups clientsGroups)
         {
-            var tempSize = clientsGroups.Size;
-            if(tempSize == 1)
+            this.messages.Enqueue(new Message(ActionType.Leave, clientsGroups));
+        }
+
+        /// <summary>
+        /// Убытие клиента
+        /// </summary>
+        private void Leave(ClientsGroups clientsGroups)
+        {
+            var table = this.tables
+                .FirstOrDefault(x => x.Value.Any(a => a.Guid == clientsGroups.Guid))
+                .Key;
+
+            if(table != null)
             {
-                tempSize = 2;
+                this.tables[table].RemoveAll(x => x.Guid == clientsGroups.Guid);
             }
 
-            for (int i = tempSize; i <= 6; i++)
+            var freeSize = table.Size - this.tables[table].Sum(x => x.Size);
+            var tempFreeSize = freeSize;
+
+            // будем искать людей в очереди, кто пришел раньше
+            // начнем с тех, кого меньше
+            for (int i = 1; i <= freeSize; i++)
             {
-                var table = this.tables[tempSize - 2]
-                    .FirstOrDefault(x => x.Value.Guid == clientsGroups.Guid).Key;
+                var nextClients = this.clients.Where(x => x.Size == i).ToList();
 
-                if(table != null)
+                foreach (var nextClient in nextClients)
                 {
-                    this.tables[tempSize - 2].TryRemove(table, out ClientsGroups client);
-                    this.availableTablesQueue[tempSize - 2].Enqueue(table);
-                    break;
-                }
+                    // уберем из очереди
+                    this.clients.Remove(nextClient);
+                    // добавим к столу
+                    this.tables[table].Add(nextClient);
 
-                continue;
+                    // если свободного места не осталось, завершим перебор
+                    if (freeSize < 1)
+                    {
+                        break;
+                    }
+
+                    freeSize -= i;
+                }
+            }
+
+            this.Bored(freeSize);
+        }
+
+        /// <summary>
+        /// Прибытие клиента
+        /// </summary>
+        /// <param name="clientsGroups"></param>
+        private void Arrive(ClientsGroups clientsGroups)
+        {
+            // сначала пытаемся найти свободный стол нужного размера
+            var freeTable = this.tables
+                .Where(x => !x.Value.Any() && x.Key.Size == clientsGroups.Size)
+                .FirstOrDefault()
+                .Key;
+
+            // .. ищем размера побольше
+            if(freeTable == null)
+            {
+                freeTable = this.tables
+                    .Where(x => !x.Value.Any() && x.Key.Size > clientsGroups.Size)
+                    .FirstOrDefault()
+                    .Key;
+            }
+
+            // .. ищем занятый
+            if (freeTable == null)
+            {
+                freeTable = this.tables
+                    .Where(x => (x.Key.Size-x.Value.Sum(s => s.Size)) >= clientsGroups.Size)
+                    .FirstOrDefault()
+                    .Key;
+            }
+
+            var freeSize = freeTable.Size - this.tables[freeTable].Sum(x => x.Size);
+
+            if(freeTable == null)
+            {
+                this.clients.Add(clientsGroups);
+                return;
+            }
+
+            this.tables[freeTable].Add(clientsGroups);
+
+            this.Bored(freeSize);
+        }
+
+        private void Bored(Int32 freeSize)
+        {
+            // найдем всех, кто мог сесть на это
+            var boredClients = this.clients
+                .Where(x => x.Size <= freeSize)
+                .ToList();
+
+            for (int i = 0; i < boredClients.Count; i++)
+            {
+                this.clients.RemoveAll(x => x.IsBored() && boredClients.Any(a => a.Guid == x.Guid));
             }
         }
+    }
+
+
+    public enum ActionType
+    {
+        Arrive = 0,
+        Leave = 1
+    }
+
+    public class Message
+    {
+        public Message(ActionType type, ClientsGroups clientsGroups)
+        {
+            this.Type = type;
+            this.ClientsGroups = clientsGroups;
+        }
+
+        public ActionType Type { set; get; }
+
+        public ClientsGroups ClientsGroups { set; get; }
     }
 }

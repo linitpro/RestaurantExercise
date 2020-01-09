@@ -15,5 +15,14 @@ namespace RestaurantExercise.Models
         public Byte Size { set; get; }
 
         public Guid Guid { set; get; }
+
+        /// <summary>
+        /// Возвращает, устал клиент или нет
+        /// </summary>
+        /// <returns></returns>
+        public Boolean IsBored()
+        {
+            return true;
+        }
     }
 }
