@@ -22,7 +22,9 @@ namespace RestaurantExercise.Models
         /// <returns></returns>
         public Boolean IsBored()
         {
-            return true;
+            Random random = new Random();
+            var x = random.Next(1, 100);
+            return x >= 40;
         }
     }
 }

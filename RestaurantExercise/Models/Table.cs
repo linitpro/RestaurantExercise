@@ -14,15 +14,5 @@ namespace RestaurantExercise.Models
         }
 
         public Int32 Size { set; get; }
-
-        /// <summary>
-        /// Клиенты
-        /// </summary>
-        public ClientsGroups ClientsGroups { set; get; }
-
-        /// <summary>
-        /// Клиенты, находящиеся за столиком
-        /// </summary>
-        public BlockingCollection<ClientsGroups> Clients { set; get; }
     }
 }
